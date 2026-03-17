@@ -68,7 +68,7 @@ WB_MONTHLY_URL = (
 )
 
 # Default history start
-DEFAULT_START = "2015-01-01"
+DEFAULT_START = "2000-01-01"
 
 # Chart style
 plt.rcParams.update({
