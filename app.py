@@ -23,6 +23,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.dates import AutoDateLocator, ConciseDateFormatter
 
 # ---------------------------------------------------------------------------
 # CSIRO Colour Palette
@@ -43,6 +44,17 @@ COMMODITY_COLOURS = {
     "Wheat":       CSIRO_ORANGE,
     "Urea":        CSIRO_TEAL,
 }
+
+
+def smart_date_axis(ax):
+    """Auto-scale x-axis date ticks based on the visible date range."""
+    locator = AutoDateLocator(minticks=4, maxticks=12)
+    formatter = ConciseDateFormatter(locator)
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(formatter)
+    for label in ax.get_xticklabels():
+        label.set_rotation(0)
+        label.set_ha("center")
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DB_PATH = SCRIPT_DIR / "prices.db"
@@ -372,11 +384,16 @@ selected = st.sidebar.multiselect(
 
 min_date = prices_df["date"].min().date()
 max_date = prices_df["date"].max().date()
+
+# Smart default: start at 2015 (all commodities overlap) but allow full range
+default_start = max(min_date, pd.Timestamp("2015-01-01").date())
+
 date_range = st.sidebar.date_input(
     "Date range",
-    value=(min_date, max_date),
+    value=(default_start, max_date),
     min_value=min_date,
     max_value=max_date,
+    help="Urea data available from 1960. Brent & Wheat from ~2015.",
 )
 
 currency = st.sidebar.radio("Currency", ["USD", "AUD", "Both"], index=0)
@@ -484,8 +501,7 @@ with tab1:
     ax.set_title("Normalized Price Comparison", color=CSIRO_MIDNIGHT, fontsize=14)
     ax.legend(framealpha=0.9)
     ax.grid(alpha=0.3)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-    ax.xaxis.set_major_locator(mdates.YearLocator())
+    smart_date_axis(ax)
     fig.tight_layout()
     st.pyplot(fig)
     plt.close(fig)
@@ -518,8 +534,7 @@ with tab2:
         ax.set_title(commodity, color=CSIRO_MIDNIGHT, fontsize=13)
         ax.legend(fontsize=9)
         ax.grid(alpha=0.3)
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-        ax.xaxis.set_major_locator(mdates.YearLocator())
+        smart_date_axis(ax)
         fig.tight_layout()
         st.pyplot(fig)
         plt.close(fig)
@@ -556,8 +571,7 @@ with tab3:
         lines2, labels2 = ax2.get_legend_handles_labels()
         ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper right")
         ax1.grid(alpha=0.3)
-        ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-        ax1.xaxis.set_major_locator(mdates.YearLocator())
+        smart_date_axis(ax1)
         fig.tight_layout()
         st.pyplot(fig)
         plt.close(fig)
