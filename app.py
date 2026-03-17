@@ -8,7 +8,6 @@ Runs locally (reads from prices.db) or on Streamlit Cloud (fetches live data).
     streamlit run app.py
 """
 
-import json
 import re
 import sqlite3
 import tempfile
@@ -19,11 +18,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 import streamlit as st
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.dates import AutoDateLocator, ConciseDateFormatter
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # ---------------------------------------------------------------------------
 # CSIRO Colour Palette
@@ -44,17 +40,6 @@ COMMODITY_COLOURS = {
     "Wheat":       CSIRO_ORANGE,
     "Urea":        CSIRO_TEAL,
 }
-
-
-def smart_date_axis(ax):
-    """Auto-scale x-axis date ticks based on the visible date range."""
-    locator = AutoDateLocator(minticks=4, maxticks=12)
-    formatter = ConciseDateFormatter(locator)
-    ax.xaxis.set_major_locator(locator)
-    ax.xaxis.set_major_formatter(formatter)
-    for label in ax.get_xticklabels():
-        label.set_rotation(0)
-        label.set_ha("center")
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DB_PATH = SCRIPT_DIR / "prices.db"
@@ -79,6 +64,40 @@ WB_MONTHLY_URL = (
     "74e8be41ceb20fa0da750cda2f6b9e4e-0050012026/"
     "related/CMO-Historical-Data-Monthly.xlsx"
 )
+
+# Common Plotly layout settings
+PLOTLY_LAYOUT = dict(
+    font=dict(family="Segoe UI, system-ui, sans-serif", color=CSIRO_MIDNIGHT),
+    paper_bgcolor="white",
+    plot_bgcolor="white",
+    hovermode="x unified",
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="right",
+        x=1,
+    ),
+    margin=dict(l=60, r=30, t=50, b=40),
+)
+
+
+def styled_figure(**kwargs):
+    """Create a Plotly figure with CSIRO styling."""
+    fig = go.Figure()
+    layout = {**PLOTLY_LAYOUT, **kwargs}
+    fig.update_layout(**layout)
+    fig.update_xaxes(
+        gridcolor="#E8E8E8",
+        linecolor=CSIRO_MIST,
+        showgrid=True,
+    )
+    fig.update_yaxes(
+        gridcolor="#E8E8E8",
+        linecolor=CSIRO_MIST,
+        showgrid=True,
+    )
+    return fig
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +303,6 @@ def get_data():
     """Load data from local DB if available, otherwise fetch from APIs."""
     prices_df, rates_df = load_from_db()
     if prices_df.empty:
-        # No local DB — fetch live data (Streamlit Cloud mode)
         prices_df, rates_df = fetch_all_data()
     return prices_df, rates_df
 
@@ -464,7 +482,7 @@ for col, commodity in zip(cols, selected):
 
 
 # ---------------------------------------------------------------------------
-# Charts
+# Charts — all Plotly for smooth interactive rendering
 # ---------------------------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "📈 Normalized Comparison",
@@ -477,9 +495,11 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.subheader("Normalized Price Comparison (Z-Score)")
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
+    fig = styled_figure(
+        title="Normalized Price Comparison",
+        yaxis_title="Normalized Price (z-score)",
+        height=500,
+    )
 
     for commodity in sorted(selected):
         subset = filtered[filtered["commodity"] == commodity].copy()
@@ -492,19 +512,16 @@ with tab1:
             continue
         subset["norm"] = (subset["price_usd"] - mean_p) / std_p
         colour = COMMODITY_COLOURS.get(commodity, CSIRO_STEEL)
-        ax.plot(subset["date"], subset["norm"],
-                label=commodity, color=colour, linewidth=1.5)
+        fig.add_trace(go.Scatter(
+            x=subset["date"],
+            y=subset["norm"],
+            name=commodity,
+            line=dict(color=colour, width=1.5),
+            hovertemplate="%{x|%b %Y}: %{y:.2f}<extra>" + commodity + "</extra>",
+        ))
 
-    ax.axhline(y=0, color=CSIRO_STEEL, linewidth=0.5, linestyle="-")
-    ax.set_xlabel("Date", color=CSIRO_MIDNIGHT)
-    ax.set_ylabel("Normalized Price (z-score)", color=CSIRO_MIDNIGHT)
-    ax.set_title("Normalized Price Comparison", color=CSIRO_MIDNIGHT, fontsize=14)
-    ax.legend(framealpha=0.9)
-    ax.grid(alpha=0.3)
-    smart_date_axis(ax)
-    fig.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
+    fig.add_hline(y=0, line_dash="dot", line_color=CSIRO_STEEL, line_width=0.8)
+    st.plotly_chart(fig, use_container_width=True)
 
 
 with tab2:
@@ -517,27 +534,31 @@ with tab2:
             continue
 
         colour = COMMODITY_COLOURS.get(commodity, CSIRO_STEEL)
-        fig, ax = plt.subplots(figsize=(12, 4))
-        fig.patch.set_facecolor("white")
-        ax.set_facecolor("white")
+        fig = styled_figure(
+            title=commodity,
+            yaxis_title="Price",
+            height=350,
+        )
 
         if currency in ("USD", "Both"):
-            ax.plot(subset["date"], subset["price_usd"],
-                    color=colour, linewidth=1.3, label="{} (USD)".format(commodity))
+            fig.add_trace(go.Scatter(
+                x=subset["date"],
+                y=subset["price_usd"],
+                name="{} (USD)".format(commodity),
+                line=dict(color=colour, width=1.5),
+                hovertemplate="$%{y:,.0f} USD<extra></extra>",
+            ))
         if currency in ("AUD", "Both") and "price_aud" in subset.columns:
-            style = "--" if currency == "Both" else "-"
-            ax.plot(subset["date"], subset["price_aud"],
-                    color=colour, linewidth=1.3, linestyle=style,
-                    alpha=0.7, label="{} (AUD)".format(commodity))
+            fig.add_trace(go.Scatter(
+                x=subset["date"],
+                y=subset["price_aud"],
+                name="{} (AUD)".format(commodity),
+                line=dict(color=colour, width=1.5, dash="dash"),
+                opacity=0.7,
+                hovertemplate="$%{y:,.0f} AUD<extra></extra>",
+            ))
 
-        ax.set_ylabel("Price", color=CSIRO_MIDNIGHT)
-        ax.set_title(commodity, color=CSIRO_MIDNIGHT, fontsize=13)
-        ax.legend(fontsize=9)
-        ax.grid(alpha=0.3)
-        smart_date_axis(ax)
-        fig.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
+        st.plotly_chart(fig, use_container_width=True)
 
 
 with tab3:
@@ -549,32 +570,52 @@ with tab3:
     if wheat.empty or urea.empty:
         st.info("Select both Wheat and Urea to see this chart.")
     else:
-        fig, ax1 = plt.subplots(figsize=(12, 5))
-        fig.patch.set_facecolor("white")
-        ax1.set_facecolor("white")
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-        ax1.plot(wheat["date"], wheat["price_usd"],
-                 color=CSIRO_ORANGE, linewidth=1.5, label="Wheat")
-        ax1.set_xlabel("Date", color=CSIRO_MIDNIGHT)
-        ax1.set_ylabel("Wheat Price (USD)", color=CSIRO_ORANGE)
-        ax1.tick_params(axis="y", labelcolor=CSIRO_ORANGE)
+        fig.add_trace(
+            go.Scatter(
+                x=wheat["date"],
+                y=wheat["price_usd"],
+                name="Wheat",
+                line=dict(color=CSIRO_ORANGE, width=1.5),
+                hovertemplate="$%{y:,.0f}<extra>Wheat</extra>",
+            ),
+            secondary_y=False,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=urea["date"],
+                y=urea["price_usd"],
+                name="Urea",
+                line=dict(color=CSIRO_TEAL, width=1.5),
+                hovertemplate="$%{y:,.0f}<extra>Urea</extra>",
+            ),
+            secondary_y=True,
+        )
 
-        ax2 = ax1.twinx()
-        ax2.plot(urea["date"], urea["price_usd"],
-                 color=CSIRO_TEAL, linewidth=1.5, label="Urea")
-        ax2.set_ylabel("Urea Price (USD)", color=CSIRO_TEAL)
-        ax2.tick_params(axis="y", labelcolor=CSIRO_TEAL)
+        fig.update_layout(
+            **PLOTLY_LAYOUT,
+            title="Wheat and Urea Price Comparison",
+            height=450,
+            hovermode="x unified",
+        )
+        fig.update_xaxes(gridcolor="#E8E8E8", linecolor=CSIRO_MIST)
+        fig.update_yaxes(
+            title_text="Wheat Price (USD)",
+            title_font=dict(color=CSIRO_ORANGE),
+            tickfont=dict(color=CSIRO_ORANGE),
+            gridcolor="#E8E8E8",
+            secondary_y=False,
+        )
+        fig.update_yaxes(
+            title_text="Urea Price (USD)",
+            title_font=dict(color=CSIRO_TEAL),
+            tickfont=dict(color=CSIRO_TEAL),
+            gridcolor="#E8E8E8",
+            secondary_y=True,
+        )
 
-        ax1.set_title("Wheat and Urea Price Comparison",
-                       color=CSIRO_MIDNIGHT, fontsize=14)
-        lines1, labels1 = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper right")
-        ax1.grid(alpha=0.3)
-        smart_date_axis(ax1)
-        fig.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
+        st.plotly_chart(fig, use_container_width=True)
 
 
 with tab4:
@@ -616,27 +657,24 @@ pivot = filtered.pivot_table(
 if len(pivot.columns) >= 2 and len(pivot) >= 3:
     corr = pivot.corr()
 
-    fig, ax = plt.subplots(figsize=(6, 5))
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-
-    im = ax.imshow(corr.values, cmap="RdYlGn", vmin=-1, vmax=1, aspect="auto")
-    ax.set_xticks(range(len(corr.columns)))
-    ax.set_yticks(range(len(corr.columns)))
-    ax.set_xticklabels(corr.columns, rotation=45, ha="right", fontsize=10)
-    ax.set_yticklabels(corr.columns, fontsize=10)
-
-    for i in range(len(corr)):
-        for j in range(len(corr)):
-            ax.text(j, i, "{:.2f}".format(corr.values[i, j]),
-                    ha="center", va="center", fontsize=12,
-                    color="white" if abs(corr.values[i, j]) > 0.5 else CSIRO_MIDNIGHT)
-
-    ax.set_title("Price Correlation (Monthly)", color=CSIRO_MIDNIGHT, fontsize=13)
-    fig.colorbar(im, ax=ax, shrink=0.8)
-    fig.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
+    fig = go.Figure(data=go.Heatmap(
+        z=corr.values,
+        x=corr.columns.tolist(),
+        y=corr.columns.tolist(),
+        colorscale="RdYlGn",
+        zmin=-1, zmax=1,
+        text=[["{:.2f}".format(v) for v in row] for row in corr.values],
+        texttemplate="%{text}",
+        textfont=dict(size=14),
+        hovertemplate="%{x} vs %{y}: %{z:.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        **PLOTLY_LAYOUT,
+        title="Price Correlation (Monthly)",
+        height=400,
+        width=500,
+    )
+    st.plotly_chart(fig, use_container_width=False)
 else:
     st.info("Select at least 2 commodities with overlapping data to see correlations.")
 

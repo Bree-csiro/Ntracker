@@ -3,3 +3,4 @@ matplotlib
 openpyxl
 requests
 streamlit
+plotly
