@@ -849,11 +849,17 @@ with tab4:
             returns = log_prices.diff().dropna()
 
             if len(returns) >= 24:
-                # Fit VAR model with automatic lag selection (max 6)
+                # Fit VAR model with automatic lag selection (max 6, min 1)
                 model = VARModel(returns)
                 max_lags = min(6, len(returns) // 5)
+                if max_lags < 1:
+                    max_lags = 1
                 results = model.fit(maxlags=max_lags, ic="aic")
-                best_lag_order = results.k_ar
+                best_lag_order = max(results.k_ar, 1)  # At least 1 lag
+
+                # Re-fit with forced lag if AIC chose 0
+                if results.k_ar == 0:
+                    results = model.fit(best_lag_order)
 
                 # Forecast with confidence intervals
                 lag_data = returns.values[-best_lag_order:]
