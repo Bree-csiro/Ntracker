@@ -597,7 +597,6 @@ with tab3:
             **PLOTLY_LAYOUT,
             title="Wheat and Urea Price Comparison",
             height=450,
-            hovermode="x unified",
         )
         fig.update_xaxes(gridcolor="#E8E8E8", linecolor=CSIRO_MIST)
         fig.update_yaxes(
