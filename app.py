@@ -82,7 +82,7 @@ def fetch_all_data():
     # Yahoo Finance commodities
     for name, info in YAHOO_COMMODITIES.items():
         records = _fetch_yahoo_chart(
-            info["ticker"], name, info["unit"], start_date="2015-01-01"
+            info["ticker"], name, info["unit"], start_date="2000-01-01"
         )
         all_records.extend(records)
         time.sleep(0.5)
@@ -374,7 +374,7 @@ min_date = prices_df["date"].min().date()
 max_date = prices_df["date"].max().date()
 date_range = st.sidebar.date_input(
     "Date range",
-    value=(pd.Timestamp("2021-01-01").date(), max_date),
+    value=(min_date, max_date),
     min_value=min_date,
     max_value=max_date,
 )

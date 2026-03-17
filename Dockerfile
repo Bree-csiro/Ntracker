@@ -6,7 +6,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
-COPY .streamlit/ .streamlit/
+
+# Create Streamlit config with CSIRO theme
+RUN mkdir -p .streamlit && \
+    printf '[theme]\nprimaryColor = "#00A9CE"\nbackgroundColor = "#FFFFFF"\nsecondaryBackgroundColor = "#F0F2F6"\ntextColor = "#00313C"\nfont = "sans serif"\n\n[server]\nheadless = true\n' > .streamlit/config.toml
 
 EXPOSE 7860
 
