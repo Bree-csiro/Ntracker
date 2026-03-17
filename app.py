@@ -622,8 +622,8 @@ with tab3:
 with tab4:
     st.subheader("🔮 Forecast & Signals")
     st.caption(
-        "Lead-lag analysis, rolling correlations, directional forecast, "
-        "and price alert system for grower decision support."
+        "Decision support tools for growers — understand price trends, "
+        "get early warnings, and plan your input purchasing."
     )
 
     # ---- Prepare monthly data for analysis ----
@@ -644,10 +644,17 @@ with tab4:
         # 1. TRAFFIC LIGHT ALERT SYSTEM
         # ================================================================
         st.markdown("### 🚦 Price Alert System")
-        st.caption(
-            "Current price position relative to the selected date range. "
-            "Based on percentile rank over the analysis window."
-        )
+
+        with st.expander("ℹ️ How to read this"):
+            st.markdown("""
+**What it shows:** Where the current price sits compared to its historical range.
+
+- 🟢 **NORMAL** — Price is within the lower 60% of its historical range. No urgent action needed.
+- 🟡 **WATCH** — Price is higher than usual (60th–80th percentile). Keep an eye on it — it may continue rising.
+- 🔴 **ELEVATED** — Price is near the top of its historical range (above 80th percentile). This may be a good time to lock in contracts or forward-purchase inputs before prices rise further.
+
+**What to do:** When urea or other input costs show 🔴, consider purchasing sooner rather than later. When wheat shows 🔴, it may be a good time to sell if you have stored grain.
+            """)
 
         alert_cols = st.columns(len(monthly_overlap.columns))
         for acol, commodity in zip(alert_cols, monthly_overlap.columns):
@@ -690,11 +697,22 @@ with tab4:
         # 2. LEAD-LAG CROSS-CORRELATION
         # ================================================================
         st.markdown("### ⏱️ Lead-Lag Analysis")
-        st.caption(
-            "Cross-correlation at different monthly lags. "
-            "Positive lag = first commodity leads. "
-            "Helps identify which prices move first."
-        )
+
+        with st.expander("ℹ️ How to read this"):
+            st.markdown("""
+**What it shows:** Which commodity prices move first, and which follow later.
+
+For example, if oil prices rise today, fertiliser (urea) prices tend to follow
+a few months later — because oil and natural gas are key inputs for urea manufacturing.
+
+- **Peak on the right side** = the first commodity listed moves first
+- **Peak on the left side** = the second commodity listed moves first
+- **Peak near zero** = they move at roughly the same time
+
+**What to do:** If you see that oil has just spiked and the chart shows oil leads urea by
+3 months, you have a ~3-month window to purchase urea before the price likely rises.
+This is your early warning system.
+            """)
 
         commodity_list = list(monthly_overlap.columns)
 
@@ -791,10 +809,25 @@ with tab4:
         # 3. ROLLING CORRELATION
         # ================================================================
         st.markdown("### 📉 Rolling Correlation")
-        st.caption(
-            "12-month rolling correlation between commodities. "
-            "When correlations break down, it may signal a regime change."
-        )
+
+        with st.expander("ℹ️ How to read this"):
+            st.markdown("""
+**What it shows:** How closely commodity prices move together over time,
+using a 12-month rolling window.
+
+- **Line near +1.0** = prices move in the same direction (when one goes up, so does the other)
+- **Line near 0** = prices are moving independently
+- **Line near −1.0** = prices move in opposite directions
+
+**What to watch for:**
+- When a normally strong correlation (e.g. oil and urea) suddenly drops toward zero,
+  it signals a **regime change** — something unusual is happening in the market
+  (e.g. supply disruptions, policy changes, or geopolitical events).
+- These breakdowns often precede major price movements.
+
+**What to do:** If correlations that are normally strong suddenly break down,
+pay close attention to the market — it often means a significant price shift is coming.
+            """)
 
         if len(commodity_list) >= 2 and len(monthly_overlap) >= 12:
             window = 12
@@ -833,11 +866,30 @@ with tab4:
         # 4. DIRECTIONAL FORECAST (VAR-inspired)
         # ================================================================
         st.markdown("### 🔮 Directional Forecast")
-        st.caption(
-            "6-month price trajectory based on Vector Autoregression (VAR). "
-            "Shaded area = 80% confidence interval. "
-            "This is directional guidance, not a point prediction."
-        )
+
+        with st.expander("ℹ️ How to read this"):
+            st.markdown("""
+**What it shows:** Where prices are likely heading over the next 6 months,
+based on recent trends and how the commodities influence each other.
+
+- **Solid line** = actual historical prices
+- **Dashed line** = projected price direction
+- **Shaded area** = the range where the price is likely to fall (80% confidence)
+- **Arrow (↗️/↘️)** = expected direction and percentage change
+
+**Important:** This is a *directional guide*, not an exact price prediction.
+Think of it as "prices are likely heading up/down" rather than
+"prices will be exactly $X".
+
+**What to do:**
+- If urea is forecast ↗️ upward, consider purchasing your fertiliser needs sooner.
+- If wheat is forecast ↗️ upward, you may want to hold stored grain longer before selling.
+- A wide shaded area means **more uncertainty** — proceed with caution.
+- A narrow shaded area means **higher confidence** in the forecast direction.
+
+⚠️ *This is a statistical tool for decision support, not financial advice.
+Always consider local conditions, seasonal factors, and your own situation.*
+            """)
 
         forecast_months = 6
 
