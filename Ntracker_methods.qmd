@@ -1,0 +1,966 @@
+---
+title: "Ntracker: Mathematical Methods for Commodity Price Signal Analysis"
+subtitle: "Decision Support for Australian Growers"
+author:
+  - name: "CSIRO"
+date: today
+format:
+  pdf:
+    documentclass: article
+    papersize: a4
+    fontsize: 11pt
+    geometry:
+      - margin=2.5cm
+    number-sections: true
+    colorlinks: true
+    linkcolor: "csiroocean"
+    citecolor: "csiroteal"
+    urlcolor: "csiroorange"
+    toc: true
+    toc-depth: 3
+    fig-pos: "htbp"
+    header-includes: |
+      \usepackage{amsmath,amssymb,amsthm}
+      \usepackage{mathtools}
+      \usepackage{tikz}
+      \usetikzlibrary{arrows.meta,positioning,calc,decorations.pathmorphing,shapes.geometric,patterns,backgrounds}
+      \usepackage{pgfplots}
+      \pgfplotsset{compat=1.18}
+      \usepackage{booktabs}
+      \usepackage{algorithm2e}
+      \usepackage{xcolor}
+
+      % CSIRO Colour Palette
+      \definecolor{csiromidday}{HTML}{00A9CE}
+      \definecolor{csiromidnight}{HTML}{00313C}
+      \definecolor{csiroocean}{HTML}{004B87}
+      \definecolor{csiroteal}{HTML}{007377}
+      \definecolor{csiroorange}{HTML}{E87722}
+      \definecolor{csirogold}{HTML}{FFB81C}
+      \definecolor{csirolavender}{HTML}{9FAEE5}
+      \definecolor{csirosteel}{HTML}{757579}
+      \definecolor{csiromist}{HTML}{DADBDC}
+      \definecolor{csiroteallight}{HTML}{36CCD3}
+
+      % Math environments
+      \newtheorem{definition}{Definition}[section]
+      \newtheorem{proposition}{Proposition}[section]
+      \newtheorem{remark}{Remark}[section]
+
+      % Notation shortcuts
+      \newcommand{\E}{\mathbb{E}}
+      \newcommand{\Var}{\operatorname{Var}}
+      \newcommand{\Cov}{\operatorname{Cov}}
+      \newcommand{\Corr}{\operatorname{Corr}}
+      \newcommand{\R}{\mathbb{R}}
+      \newcommand{\N}{\mathbb{N}}
+      \newcommand{\indicator}{\mathbf{1}}
+      \newcommand{\veps}{\varepsilon}
+bibliography: references.bib
+csl: https://raw.githubusercontent.com/citation-style-language/styles/master/apa.csl
+---
+
+\newpage
+
+# Introduction {#sec-intro}
+
+Commodity price dynamics directly impact the profitability and planning
+decisions of Australian growers. Fertiliser (urea), energy (Brent crude oil),
+and grain (wheat) prices are interconnected through global supply chains:
+crude oil and natural gas drive urea manufacturing costs, which in turn
+influence grain production costs and farm-gate economics.
+
+**Ntracker** is a real-time commodity price dashboard designed to provide
+Australian growers with actionable decision support. This document provides
+the mathematical foundations underlying each analytical component of the
+system, and introduces extensions from stochastic calculus, signal processing,
+and time series econometrics that offer promising avenues for enhanced
+forecasting.
+
+We denote commodity prices as $\{P_t^{(i)}\}_{t \geq 0}$ for commodity
+$i \in \{\text{oil}, \text{wheat}, \text{urea}\}$, observed at discrete
+times $t = 1, 2, \ldots, T$. Log-prices are written $X_t^{(i)} = \log P_t^{(i)}$,
+and log-returns as $r_t^{(i)} = X_t^{(i)} - X_{t-1}^{(i)} = \log(P_t^{(i)} / P_{t-1}^{(i)})$.
+
+
+# System Architecture {#sec-architecture}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  node distance=1.2cm and 2.0cm,
+  block/.style={rectangle, draw=csiromidnight, fill=csiromidnight!8,
+    rounded corners=4pt, minimum width=3cm, minimum height=1cm,
+    font=\small, text=csiromidnight, align=center},
+  data/.style={rectangle, draw=csiroorange, fill=csiroorange!8,
+    rounded corners=4pt, minimum width=2.5cm, minimum height=0.8cm,
+    font=\small, text=csiromidnight, align=center},
+  signal/.style={rectangle, draw=csiroteal, fill=csiroteal!8,
+    rounded corners=4pt, minimum width=3cm, minimum height=1cm,
+    font=\small\bfseries, text=csiroteal, align=center},
+  arr/.style={-{Stealth[length=3mm]}, thick, color=csiroocean}
+]
+% Data sources
+\node[data] (yahoo) {Yahoo Finance\\[-2pt]\scriptsize Brent, Wheat, AUD};
+\node[data, below=0.6cm of yahoo] (wb) {World Bank\\[-2pt]\scriptsize Urea (Pink Sheet)};
+
+% Processing
+\node[block, right=2cm of $(yahoo)!0.5!(wb)$] (preproc) {Preprocessing\\[-2pt]\scriptsize Align, resample,\\[-2pt]\scriptsize merge, AUD convert};
+
+% Analysis
+\node[block, right=2cm of preproc] (analysis) {Analysis\\[-2pt]\scriptsize Z-score, CCF,\\[-2pt]\scriptsize Rolling $\rho$, VAR};
+
+% Signals
+\node[signal, above right=0.4cm and 2cm of analysis] (alert) {\color{csiroteal}Traffic Light\\[-2pt]\scriptsize Percentile alerts};
+\node[signal, right=2cm of analysis] (forecast) {\color{csiroteal}Forecast\\[-2pt]\scriptsize 6-month outlook};
+\node[signal, below right=0.4cm and 2cm of analysis] (leadlag) {\color{csiroteal}Lead-Lag\\[-2pt]\scriptsize Early warnings};
+
+% Arrows
+\draw[arr] (yahoo.east) -- ++(0.5,0) |- (preproc.west);
+\draw[arr] (wb.east) -- ++(0.5,0) |- (preproc.west);
+\draw[arr] (preproc) -- (analysis);
+\draw[arr] (analysis.east) -- ++(0.5,0) |- (alert.west);
+\draw[arr] (analysis.east) -- (forecast.west);
+\draw[arr] (analysis.east) -- ++(0.5,0) |- (leadlag.west);
+\end{tikzpicture}
+\caption{Ntracker data pipeline: from public APIs through statistical
+analysis to grower-facing decision signals.}
+\label{fig:pipeline}
+\end{figure}
+
+
+# Current Methods {#sec-current}
+
+## Normalised Comparison (Z-Score) {#sec-zscore}
+
+To compare commodities with different units and scales (USD/barrel vs
+USD/mt vs USc/bushel), we standardise each series to zero mean and unit
+variance:
+
+\begin{definition}[Z-Score Normalisation]
+For commodity $i$ with price series $\{P_t^{(i)}\}_{t=1}^{T}$, the
+normalised series is
+\begin{equation}
+  z_t^{(i)} = \frac{P_t^{(i)} - \bar{P}^{(i)}}{\hat{\sigma}^{(i)}},
+  \qquad
+  \bar{P}^{(i)} = \frac{1}{T}\sum_{t=1}^{T} P_t^{(i)},
+  \qquad
+  \hat{\sigma}^{(i)} = \sqrt{\frac{1}{T-1}\sum_{t=1}^{T}
+    \bigl(P_t^{(i)} - \bar{P}^{(i)}\bigr)^2}.
+  \label{eq:zscore}
+\end{equation}
+\end{definition}
+
+The resulting dimensionless series $z_t^{(i)} \in \R$ enables direct visual
+comparison of co-movements across commodities on a common axis.
+
+
+## Cross-Correlation Analysis (Lead-Lag) {#sec-ccf}
+
+The cross-correlation function (CCF) quantifies the linear dependence
+between two time series at different temporal offsets, enabling identification
+of *lead-lag* relationships---i.e., which commodity's price moves first.
+
+\begin{definition}[Sample Cross-Correlation Function]
+For series $\{X_t\}$ and $\{Y_t\}$ of length $T$, the sample
+cross-correlation at lag $\tau \in \mathbb{Z}$ is
+\begin{equation}
+  \hat{\rho}_{XY}(\tau) =
+  \frac{\hat{\gamma}_{XY}(\tau)}
+       {\sqrt{\hat{\gamma}_{XX}(0)\,\hat{\gamma}_{YY}(0)}},
+  \label{eq:ccf}
+\end{equation}
+where the sample cross-covariance is
+\begin{equation}
+  \hat{\gamma}_{XY}(\tau) =
+  \frac{1}{T} \sum_{t=1}^{T - |\tau|}
+  \bigl(X_{t} - \bar{X}\bigr)
+  \bigl(Y_{t+\tau} - \bar{Y}\bigr),
+  \qquad \tau \in \{-\tau_{\max}, \ldots, \tau_{\max}\}.
+  \label{eq:crosscov}
+\end{equation}
+\end{definition}
+
+\begin{remark}[Interpretation for growers]
+If $\hat{\rho}_{XY}(\tau)$ attains its maximum at $\tau^* > 0$, then $X$
+\emph{leads} $Y$ by approximately $\tau^*$ periods. In the Ntracker context,
+if Brent crude leads urea with $\tau^* \approx 3$ months, a spike in oil
+prices today signals that urea prices are likely to follow within a quarter---
+giving growers an actionable purchasing window.
+\end{remark}
+
+
+## Rolling Windowed Correlation {#sec-rolling}
+
+Correlations between commodity prices are not stationary; they evolve with
+market regimes. A rolling window of width $w$ captures this evolution:
+
+\begin{equation}
+  \hat{\rho}_w(t) =
+  \frac{\displaystyle\sum_{s=t-w+1}^{t}
+    \bigl(X_s - \bar{X}_{[t-w+1:t]}\bigr)
+    \bigl(Y_s - \bar{Y}_{[t-w+1:t]}\bigr)}
+  {\sqrt{\displaystyle\sum_{s=t-w+1}^{t}
+    \bigl(X_s - \bar{X}_{[t-w+1:t]}\bigr)^2
+    \sum_{s=t-w+1}^{t}
+    \bigl(Y_s - \bar{Y}_{[t-w+1:t]}\bigr)^2}},
+  \qquad t \geq w,
+  \label{eq:rolling}
+\end{equation}
+
+where $\bar{X}_{[a:b]} = \frac{1}{b-a+1}\sum_{s=a}^{b} X_s$.
+
+In Ntracker, we use $w = 12$ months. A sharp decline in $\hat{\rho}_w(t)$
+between historically correlated commodities (e.g., oil and urea) signals a
+**regime change**---often caused by supply disruptions, policy interventions,
+or geopolitical events---and frequently precedes significant price movements.
+
+
+## Percentile-Based Alert System {#sec-alerts}
+
+The traffic light system maps each commodity's current price to its
+empirical cumulative distribution function (ECDF) over the analysis window:
+
+\begin{definition}[Percentile Rank]
+\begin{equation}
+  \Pi_t^{(i)} =
+  \frac{1}{N}\sum_{s=1}^{N}
+  \indicator\!\bigl(P_s^{(i)} < P_t^{(i)}\bigr) \times 100,
+  \label{eq:percentile}
+\end{equation}
+where $N$ is the number of historical observations in the chosen window.
+\end{definition}
+
+The alert mapping is:
+
+\begin{equation}
+  \text{Alert}(P_t^{(i)}) =
+  \begin{cases}
+    \textcolor{green!60!black}{\text{\textsf{NORMAL}}}
+      & \text{if } \Pi_t^{(i)} < 60, \\[4pt]
+    \textcolor{csirogold}{\text{\textsf{WATCH}}}
+      & \text{if } 60 \leq \Pi_t^{(i)} < 80, \\[4pt]
+    \textcolor{red!70!black}{\text{\textsf{ELEVATED}}}
+      & \text{if } \Pi_t^{(i)} \geq 80.
+  \end{cases}
+  \label{eq:alert}
+\end{equation}
+
+
+## Vector Autoregression (VAR) {#sec-var}
+
+The VAR model [@sims1980; @lutkepohl2005] captures the joint dynamics of
+multiple time series, allowing each variable to depend on its own past
+values and the past values of all other variables.
+
+\begin{definition}[VAR($p$) Model]
+Let $\boldsymbol{r}_t = (r_t^{\text{oil}}, \, r_t^{\text{wheat}}, \,
+r_t^{\text{urea}})^\top \in \R^3$ be the vector of monthly log-returns.
+The VAR($p$) model is
+\begin{equation}
+  \boldsymbol{r}_t = \boldsymbol{c} + \sum_{\ell=1}^{p} \boldsymbol{A}_\ell \, \boldsymbol{r}_{t-\ell}
+  + \boldsymbol{\veps}_t,
+  \qquad
+  \boldsymbol{\veps}_t \sim \mathcal{N}(\boldsymbol{0}, \boldsymbol{\Sigma}),
+  \label{eq:var}
+\end{equation}
+where $\boldsymbol{c} \in \R^3$ is an intercept vector,
+$\boldsymbol{A}_\ell \in \R^{3 \times 3}$ are coefficient matrices, and
+$\boldsymbol{\Sigma} \in \R^{3 \times 3}$ is the innovation covariance matrix.
+\end{definition}
+
+The lag order $p$ is selected by minimising the Akaike Information Criterion
+[@akaike1974]:
+
+\begin{equation}
+  \text{AIC}(p) = \log \det(\hat{\boldsymbol{\Sigma}}_p)
+  + \frac{2 \cdot 3^2 p}{T},
+  \label{eq:aic}
+\end{equation}
+
+where $\hat{\boldsymbol{\Sigma}}_p$ is the ML estimate of the residual covariance
+for a VAR($p$). We enforce $p \geq 1$.
+
+### Forecasting
+
+Given the fitted model, the $h$-step-ahead forecast is computed recursively:
+
+\begin{equation}
+  \hat{\boldsymbol{r}}_{T+h|T} = \boldsymbol{c}
+  + \sum_{\ell=1}^{p} \boldsymbol{A}_\ell \, \hat{\boldsymbol{r}}_{T+h-\ell|T},
+  \label{eq:var-forecast}
+\end{equation}
+
+with $\hat{\boldsymbol{r}}_{T+h-\ell|T} = \boldsymbol{r}_{T+h-\ell}$ when $T+h-\ell \leq T$.
+The forecast is converted to price levels via cumulative log-returns:
+
+\begin{equation}
+  \hat{P}_{T+h}^{(i)} = P_T^{(i)} \cdot
+  \exp\!\left(\sum_{j=1}^{h} \hat{r}_{T+j|T}^{(i)}\right).
+  \label{eq:price-forecast}
+\end{equation}
+
+Confidence intervals are obtained from the forecast error variance decomposition
+[@lutkepohl2005, Chapter 3], yielding an 80\% prediction interval
+$[\hat{P}_{\text{lo}}, \hat{P}_{\text{hi}}]$ for each commodity.
+
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  var/.style={circle, draw=csiromidnight, fill=csiromidday!15,
+    minimum size=1.4cm, font=\small\bfseries, text=csiromidnight},
+  arr/.style={-{Stealth[length=2.5mm]}, thick},
+  self/.style={-{Stealth[length=2.5mm]}, thick, looseness=5}
+]
+\node[var] (oil) at (0, 0) {Oil};
+\node[var] (wheat) at (4, 0) {Wheat};
+\node[var] (urea) at (2, -2.5) {Urea};
+
+% Cross effects
+\draw[arr, csiroorange] (oil) to[bend left=20]
+  node[above, font=\scriptsize, csiroorange] {$A_{21}$} (wheat);
+\draw[arr, csiroteal] (oil) to[bend left=20]
+  node[left, font=\scriptsize, csiroteal] {$A_{31}$} (urea);
+\draw[arr, csirolavender] (wheat) to[bend left=20]
+  node[right, font=\scriptsize, csirolavender] {$A_{32}$} (urea);
+
+% Reverse
+\draw[arr, csiroorange!50] (wheat) to[bend left=20]
+  node[below, font=\scriptsize, csiroorange!50] {$A_{12}$} (oil);
+\draw[arr, csiroteal!50] (urea) to[bend left=20]
+  node[right, font=\scriptsize, csiroteal!50] {$A_{13}$} (oil);
+\draw[arr, csirolavender!50] (urea) to[bend left=20]
+  node[left, font=\scriptsize, csirolavender!50] {$A_{23}$} (wheat);
+
+% Self loops
+\draw[self, csiromidday] (oil) to[out=135, in=45] (oil);
+\draw[self, csiromidday] (wheat) to[out=135, in=45] (wheat);
+\draw[self, csiromidday] (urea) to[out=-45, in=-135] (urea);
+\end{tikzpicture}
+\caption{VAR interaction structure: each commodity depends on its own lagged
+values (self-loops, \textcolor{csiromidday}{blue}) and cross-effects from
+other commodities. Darker arrows indicate typically stronger effects;
+lighter arrows indicate weaker reverse effects.}
+\label{fig:var-structure}
+\end{figure}
+
+
+\newpage
+
+# Theoretical Extensions {#sec-extensions}
+
+The current Ntracker methods provide a solid foundation for grower decision
+support. The following sections introduce mathematical frameworks from
+stochastic calculus, signal processing, and econometrics that offer
+deeper analytical capabilities.
+
+
+## Ornstein--Uhlenbeck Mean Reversion {#sec-ou}
+
+### Motivation
+
+Commodity prices, unlike equity prices, exhibit **mean reversion**: when
+oil prices spike due to a geopolitical shock, supply-side responses
+(increased production, demand destruction, substitution) gradually pull
+prices back toward long-run equilibrium levels determined by marginal
+production costs [@schwartz1997; @pindyck1999].
+
+This fundamental economic property makes Geometric Brownian Motion (GBM)---the
+workhorse of equity option pricing---inappropriate for commodities. GBM has
+no mechanism for reversion. Instead, we turn to the Ornstein--Uhlenbeck (O-U)
+process [@uhlenbeck1930], which elegantly captures mean reversion via a
+restoring drift.
+
+\begin{definition}[Ornstein--Uhlenbeck Process]
+The O-U process $\{X_t\}_{t \geq 0}$ satisfies the stochastic differential
+equation (SDE)
+\begin{equation}
+  dX_t = \theta(\mu - X_t)\,dt + \sigma\,dW_t,
+  \label{eq:ou-sde}
+\end{equation}
+where:
+\begin{itemize}
+  \item $\mu \in \R$ is the long-run equilibrium level,
+  \item $\theta > 0$ is the speed of mean reversion,
+  \item $\sigma > 0$ is the volatility (diffusion coefficient),
+  \item $W_t$ is a standard Wiener process.
+\end{itemize}
+\end{definition}
+
+### Analytic Solution
+
+By the variation of constants formula (see @oksendal2013, Chapter 5), the
+solution to \eqref{eq:ou-sde} is:
+
+\begin{equation}
+  X_t = \mu + (X_0 - \mu)\,e^{-\theta t}
+  + \sigma \int_0^t e^{-\theta(t-s)}\,dW_s.
+  \label{eq:ou-solution}
+\end{equation}
+
+The stochastic integral is Gaussian, giving us closed-form moments:
+
+\begin{proposition}[O-U Conditional Distribution]
+\label{prop:ou-moments}
+Given $X_0 = x_0$, we have $X_t \mid X_0 = x_0 \sim \mathcal{N}(m_t, v_t)$, where
+\begin{align}
+  m_t &= \E[X_t \mid X_0 = x_0]
+       = \mu + (x_0 - \mu)\,e^{-\theta t},
+  \label{eq:ou-mean} \\[6pt]
+  v_t &= \Var(X_t \mid X_0 = x_0)
+       = \frac{\sigma^2}{2\theta}\bigl(1 - e^{-2\theta t}\bigr).
+  \label{eq:ou-var}
+\end{align}
+\end{proposition}
+
+\begin{remark}[Stationary distribution]
+As $t \to \infty$, the conditional distribution converges to the stationary
+distribution $X_\infty \sim \mathcal{N}(\mu, \sigma^2 / 2\theta)$. The
+rate of convergence is governed by $\theta$.
+\end{remark}
+
+### Half-Life of Mean Reversion
+
+A crucial quantity for growers is the **half-life**---the expected time for
+a price deviation to decay to half its initial magnitude:
+
+\begin{equation}
+  t_{1/2} = \frac{\ln 2}{\theta}.
+  \label{eq:halflife}
+\end{equation}
+
+For instance, if $\theta = 0.23\,\text{month}^{-1}$ for urea (estimated
+from historical data), then $t_{1/2} \approx 3$ months, meaning urea
+price deviations from equilibrium typically halve in about one quarter---a
+directly actionable insight for purchasing decisions.
+
+
+### Application to Commodity Log-Prices
+
+Setting $X_t = \log P_t$, we model commodity prices as:
+
+\begin{equation}
+  d(\log P_t) = \theta\bigl(\mu - \log P_t\bigr)\,dt + \sigma\,dW_t,
+  \label{eq:ou-logprice}
+\end{equation}
+
+which implies that $P_t$ follows a **geometric O-U process** (also known
+as the exponential O-U or Vasicek model applied to log-prices; cf.
+@vasicek1977). The price level itself satisfies (by It\^o's lemma):
+
+\begin{equation}
+  dP_t = P_t\!\left[\left(\theta(\mu - \log P_t)
+  + \tfrac{1}{2}\sigma^2\right)dt + \sigma\,dW_t\right].
+  \label{eq:ou-price-ito}
+\end{equation}
+
+
+### Parameter Estimation
+
+For discrete observations $\{X_t\}_{t=1}^{T}$ at uniform intervals
+$\Delta t$, the O-U parameters map to the AR(1) regression:
+
+\begin{equation}
+  X_t = a + b\,X_{t-1} + \eta_t,
+  \qquad \eta_t \sim \mathcal{N}(0, \sigma_\eta^2),
+  \label{eq:ou-ar1}
+\end{equation}
+
+with parameter recovery via:
+
+\begin{equation}
+  \hat{\theta} = -\frac{\ln \hat{b}}{\Delta t},
+  \qquad
+  \hat{\mu} = \frac{\hat{a}}{1 - \hat{b}},
+  \qquad
+  \hat{\sigma} = \hat{\sigma}_\eta
+    \sqrt{\frac{-2 \ln \hat{b}}{\Delta t\,(1 - \hat{b}^2)}}.
+  \label{eq:ou-estimation}
+\end{equation}
+
+
+### Connection to Evolutionary Biology
+
+\begin{remark}[O-U in phylogenetic comparative methods]
+The O-U process has a rich parallel in evolutionary biology, where it models
+trait evolution under stabilising selection [@hansen1997; @butler2004].
+In that context, $X_t$ represents a phenotypic trait value,
+$\mu$ is the optimal trait value (selective optimum), and $\theta$ quantifies
+the strength of stabilising selection pulling traits toward the optimum.
+The G-matrix framework for multivariate trait evolution (cf. @blomberg2012)
+extends this to $\R^n$, yielding a multivariate O-U:
+\begin{equation}
+  d\boldsymbol{X}_t = \boldsymbol{\Theta}(\boldsymbol{\mu} - \boldsymbol{X}_t)\,dt
+  + \boldsymbol{\Sigma}^{1/2}\,d\boldsymbol{W}_t,
+  \label{eq:ou-multivariate}
+\end{equation}
+where $\boldsymbol{\Theta} \in \R^{n \times n}$ is the selection strength matrix.
+In our commodity price context, $\boldsymbol{\Theta}$ captures the cross-commodity
+mean reversion structure---how deviations in one commodity's price influence
+reversion in another.
+\end{remark}
+
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=12cm, height=6cm,
+  xlabel={Time $t$},
+  ylabel={$X_t = \log P_t$},
+  axis lines=middle,
+  xmin=0, xmax=10,
+  ymin=-2, ymax=4,
+  ytick={0, 1.5},
+  yticklabels={$0$, $\mu$},
+  xtick=\empty,
+  every axis x label/.style={at={(ticklabel* cs:1)}, anchor=west},
+  every axis y label/.style={at={(ticklabel* cs:1)}, anchor=south},
+  clip=false
+]
+
+% Equilibrium line
+\addplot[dashed, color=csirosteel, thick, domain=0:10] {1.5};
+\node[right, color=csirosteel, font=\small] at (axis cs:10.2, 1.5)
+  {equilibrium $\mu$};
+
+% Confidence band (stationary distribution)
+\addplot[fill=csiromidday, fill opacity=0.08, draw=none, domain=0:10]
+  {1.5 + 1.2} \closedcycle;
+\addplot[fill=white, draw=none, domain=0:10]
+  {1.5 - 1.2} \closedcycle;
+\addplot[dashed, color=csiromidday!40, thin, domain=0:10] {1.5 + 1.2};
+\addplot[dashed, color=csiromidday!40, thin, domain=0:10] {1.5 - 1.2};
+
+% Sample O-U path (hand-drawn approximation)
+\addplot[color=csiroorange, thick, smooth]
+  coordinates {
+    (0, 3.5) (0.3, 3.2) (0.6, 2.8) (1.0, 2.5)
+    (1.5, 2.2) (2.0, 1.8) (2.5, 1.5) (3.0, 1.7)
+    (3.5, 1.3) (4.0, 0.8) (4.5, 0.5) (5.0, 0.9)
+    (5.5, 1.3) (6.0, 1.6) (6.5, 1.4) (7.0, 1.8)
+    (7.5, 2.2) (8.0, 1.9) (8.5, 1.5) (9.0, 1.6)
+    (9.5, 1.4) (10.0, 1.5)
+  };
+
+% Annotations
+\draw[{Stealth[length=2mm]}-{Stealth[length=2mm]}, thick, csiroteal]
+  (axis cs:0.5, 3.2) -- (axis cs:0.5, 1.5)
+  node[midway, left, font=\small, csiroteal] {$\theta(\mu - X_t)$};
+
+\node[right, font=\scriptsize, csiromidday] at (axis cs:10.2, 2.7)
+  {$\mu + \sigma/\sqrt{2\theta}$};
+\node[right, font=\scriptsize, csiromidday] at (axis cs:10.2, 0.3)
+  {$\mu - \sigma/\sqrt{2\theta}$};
+
+% Starting point
+\node[above right, font=\small, csiroorange] at (axis cs:0, 3.5)
+  {$X_0$ (price shock)};
+
+\end{axis}
+\end{tikzpicture}
+\caption{Ornstein--Uhlenbeck process: a price shock at $t=0$ is gradually
+pulled back toward equilibrium $\mu$ by the restoring drift
+$\theta(\mu - X_t)$. The shaded band shows the stationary distribution
+$\pm\sigma/\sqrt{2\theta}$ around $\mu$.}
+\label{fig:ou-process}
+\end{figure}
+
+
+### Comparison with GBM
+
+For completeness, geometric Brownian motion (GBM) satisfies:
+
+\begin{equation}
+  dP_t = \alpha P_t\,dt + \sigma P_t\,dW_t,
+  \label{eq:gbm}
+\end{equation}
+
+with solution $P_t = P_0 \exp\bigl((\alpha - \tfrac{1}{2}\sigma^2)t
++ \sigma W_t\bigr)$. GBM has **no mean reversion**: $\E[P_t] = P_0 e^{\alpha t}$
+grows (or decays) exponentially. This is appropriate for equities (which have
+no natural equilibrium price) but economically inappropriate for commodities
+where supply-side responses create restoring forces [@schwartz1997;
+@dixit1994].
+
+
+## Wavelet Decomposition {#sec-wavelets}
+
+### Motivation
+
+Commodity price signals contain information at multiple time scales:
+short-term noise (daily/weekly fluctuations), medium-term cycles
+(seasonal patterns, inventory effects), and long-term trends (structural
+shifts in demand, technology, and policy). Separating these components
+allows growers to answer the critical question: *"Is this price movement
+real, or just noise?"*
+
+Fourier analysis decomposes signals by frequency but sacrifices temporal
+localisation. Wavelet analysis [@daubechies1992; @mallat1989] provides
+**simultaneous time--frequency resolution**, making it ideal for
+non-stationary economic time series.
+
+### Continuous Wavelet Transform
+
+\begin{definition}[Continuous Wavelet Transform]
+The CWT of a signal $f \in L^2(\R)$ with respect to a mother wavelet
+$\psi$ is
+\begin{equation}
+  \mathcal{W}_f(a, b) = \frac{1}{\sqrt{|a|}}
+  \int_{-\infty}^{\infty} f(t)\,
+  \psi^*\!\left(\frac{t - b}{a}\right) dt,
+  \label{eq:cwt}
+\end{equation}
+where $a \in \R \setminus \{0\}$ is the scale (inversely related to
+frequency), $b \in \R$ is the translation (time localisation), and
+$\psi^*$ is the complex conjugate of $\psi$.
+\end{definition}
+
+The wavelet $\psi$ must satisfy the \emph{admissibility condition}:
+
+\begin{equation}
+  C_\psi = \int_0^{\infty}
+  \frac{|\hat{\psi}(\omega)|^2}{\omega}\,d\omega < \infty,
+  \label{eq:admissibility}
+\end{equation}
+
+where $\hat{\psi}$ is the Fourier transform of $\psi$. This ensures
+$\psi$ has zero mean ($\int \psi(t)\,dt = 0$) and allows perfect
+reconstruction.
+
+
+### Discrete Wavelet Transform and Multiresolution Analysis
+
+For computational implementation, we use the discrete wavelet transform
+(DWT) based on Mallat's multiresolution analysis (MRA) framework
+[@mallat1989]:
+
+\begin{definition}[Multiresolution Decomposition]
+A signal $f(t)$ is decomposed into a smooth approximation and successive
+layers of detail:
+\begin{equation}
+  f(t) = \underbrace{\sum_{k} c_{J,k}\,\phi_{J,k}(t)}_{\text{approximation (trend)}}
+  + \underbrace{\sum_{j=1}^{J}\sum_{k} d_{j,k}\,\psi_{j,k}(t)}_{\text{details (fluctuations)}},
+  \label{eq:mra}
+\end{equation}
+where:
+\begin{itemize}
+  \item $\phi_{J,k}(t) = 2^{-J/2}\phi(2^{-J}t - k)$ are scaled/translated
+        \emph{scaling functions} (father wavelet),
+  \item $\psi_{j,k}(t) = 2^{-j/2}\psi(2^{-j}t - k)$ are the
+        \emph{wavelet functions} (mother wavelet) at scale $j$,
+  \item $c_{J,k}$ are \emph{approximation coefficients}
+        (capturing the long-term trend),
+  \item $d_{j,k}$ are \emph{detail coefficients} at scale $j$
+        (capturing fluctuations at time scale $\sim 2^j \Delta t$).
+\end{itemize}
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  node distance=0.8cm,
+  box/.style={rectangle, draw=#1, fill=#1!8, rounded corners=3pt,
+    minimum width=2.8cm, minimum height=0.7cm,
+    font=\small, text=csiromidnight},
+  arr/.style={-{Stealth[length=2.5mm]}, thick, #1}
+]
+% Signal
+\node[box=csiromidnight] (signal) {Price signal $P_t$};
+
+% Level 1
+\node[box=csiroorange, below left=1cm and 0.5cm of signal] (a1) {$A_1$: Approx.};
+\node[box=csiroteal, below right=1cm and 0.5cm of signal] (d1) {$D_1$: Detail};
+\node[right=0.3cm of d1, font=\scriptsize, csirosteel] {$\sim$1--2 months};
+
+% Level 2
+\node[box=csiroorange, below left=1cm and 0.2cm of a1] (a2) {$A_2$: Approx.};
+\node[box=csiroteal, below right=1cm and 0.2cm of a1] (d2) {$D_2$: Detail};
+\node[right=0.3cm of d2, font=\scriptsize, csirosteel] {$\sim$3--6 months};
+
+% Level 3
+\node[box=csiroorange, below left=1cm and 0.2cm of a2] (a3) {$A_3$: Trend};
+\node[box=csiroteal, below right=1cm and 0.2cm of a2] (d3) {$D_3$: Detail};
+\node[right=0.3cm of d3, font=\scriptsize, csirosteel] {$\sim$6--12 months};
+
+% Arrows
+\draw[arr=csiroorange] (signal) -- (a1) node[midway, left, font=\tiny] {LP};
+\draw[arr=csiroteal] (signal) -- (d1) node[midway, right, font=\tiny] {HP};
+\draw[arr=csiroorange] (a1) -- (a2) node[midway, left, font=\tiny] {LP};
+\draw[arr=csiroteal] (a1) -- (d2) node[midway, right, font=\tiny] {HP};
+\draw[arr=csiroorange] (a2) -- (a3) node[midway, left, font=\tiny] {LP};
+\draw[arr=csiroteal] (a2) -- (d3) node[midway, right, font=\tiny] {HP};
+
+\node[below=0.3cm of a3, font=\scriptsize, csirosteel] {$>$12 months};
+\end{tikzpicture}
+\caption{Wavelet filter bank for commodity price decomposition. At each
+level, the signal is split by low-pass (LP) and high-pass (HP) filters
+into approximation and detail coefficients. Detail coefficients at
+different scales capture fluctuations at different time horizons, while
+the final approximation captures the long-term trend.}
+\label{fig:wavelet-filterbank}
+\end{figure}
+
+
+### Application to Commodity Prices
+
+For monthly commodity prices, a 3-level DWT with Daubechies-4 wavelets
+yields:
+
+\begin{equation}
+  P_t = \underbrace{A_3(t)}_{\substack{\text{long-term trend}\\
+    \text{(structural shifts)}}}
+  + \underbrace{D_3(t)}_{\substack{\text{6--12 month}\\
+    \text{cycles}}}
+  + \underbrace{D_2(t)}_{\substack{\text{3--6 month}\\
+    \text{seasonal}}}
+  + \underbrace{D_1(t)}_{\substack{\text{1--2 month}\\
+    \text{noise}}}.
+  \label{eq:wavelet-decomp}
+\end{equation}
+
+\begin{remark}[Grower interpretation]
+A price spike in $P_t$ that appears primarily in $D_1$ is likely
+short-term noise---no action required. If it appears in $D_2$ or $D_3$,
+it represents a medium-term cycle that may persist for several months.
+If it appears in $A_3$, it signals a fundamental structural shift.
+This decomposition directly informs purchasing timing:
+\textbf{buy through noise, act on trend}.
+\end{remark}
+
+### Wavelet Coherence
+
+To examine time-varying co-movement between two commodity prices at
+different scales, wavelet coherence extends the concept of correlation to
+the time--frequency plane [@torrence1998]:
+
+\begin{equation}
+  R_{XY}^2(a, b) =
+  \frac{\bigl|S\bigl(a^{-1}\mathcal{W}_{XY}(a,b)\bigr)\bigr|^2}
+  {S\bigl(a^{-1}|\mathcal{W}_X(a,b)|^2\bigr) \cdot
+   S\bigl(a^{-1}|\mathcal{W}_Y(a,b)|^2\bigr)},
+  \label{eq:wavelet-coherence}
+\end{equation}
+
+where $\mathcal{W}_{XY}(a,b) = \mathcal{W}_X(a,b)\,\mathcal{W}_Y^*(a,b)$
+is the cross-wavelet spectrum and $S(\cdot)$ is a smoothing operator in
+both time and scale.
+
+
+## Granger Causality {#sec-granger}
+
+### Background
+
+While cross-correlation (\S\ref{sec-ccf}) reveals lead-lag associations,
+it does not test for *predictive causality*. Granger causality
+[@granger1969] formalises the question: does knowledge of past values of
+$X$ improve our ability to predict $Y$, beyond what $Y$'s own past provides?
+
+\begin{definition}[Granger Causality]
+$X$ is said to \emph{Granger-cause} $Y$ if
+\begin{equation}
+  \Var\bigl(Y_t \mid \mathcal{F}_{t-1}^{(X,Y)}\bigr) <
+  \Var\bigl(Y_t \mid \mathcal{F}_{t-1}^{(Y)}\bigr),
+  \label{eq:granger-def}
+\end{equation}
+where $\mathcal{F}_{t-1}^{(X,Y)}$ is the $\sigma$-algebra generated by
+past values of both $X$ and $Y$, and $\mathcal{F}_{t-1}^{(Y)}$ by $Y$
+alone.
+\end{definition}
+
+### Testing Procedure
+
+In practice, we compare two nested regression models:
+
+**Restricted** (only own lags):
+\begin{equation}
+  Y_t = \alpha_0 + \sum_{\ell=1}^{p} \alpha_\ell\, Y_{t-\ell}
+  + \veps_t^{(R)}.
+  \label{eq:granger-restricted}
+\end{equation}
+
+**Unrestricted** (own lags $+$ lags of $X$):
+\begin{equation}
+  Y_t = \alpha_0 + \sum_{\ell=1}^{p} \alpha_\ell\, Y_{t-\ell}
+  + \sum_{\ell=1}^{p} \beta_\ell\, X_{t-\ell}
+  + \veps_t^{(U)}.
+  \label{eq:granger-unrestricted}
+\end{equation}
+
+The null hypothesis $H_0: \beta_1 = \beta_2 = \cdots = \beta_p = 0$
+(no Granger causality) is tested via the F-statistic:
+
+\begin{equation}
+  F = \frac{(\text{RSS}_R - \text{RSS}_U) / p}
+           {\text{RSS}_U / (T - 2p - 1)}
+  \;\sim\; F(p, T - 2p - 1)
+  \quad \text{under } H_0,
+  \label{eq:granger-ftest}
+\end{equation}
+
+where $\text{RSS}_R$ and $\text{RSS}_U$ are the residual sums of squares
+of the restricted and unrestricted models, respectively.
+
+\begin{remark}[Interpretation for Ntracker]
+Testing whether Brent crude Granger-causes urea formalises the economic
+hypothesis that oil price changes propagate through the cost structure
+of urea manufacturing (natural gas feedstock, transport costs). A
+significant result at, say, $p = 3$ lags would statistically confirm
+the 3-month early warning window identified by cross-correlation, and
+provide a formal $p$-value for confidence.
+\end{remark}
+
+\begin{remark}[Multivariate extension]
+Within the VAR framework (\S\ref{sec-var}), Granger causality is tested
+by imposing zero restrictions on the appropriate elements of the
+coefficient matrices $\boldsymbol{A}_\ell$. Specifically, $X^{(i)}$ does not
+Granger-cause $X^{(j)}$ if and only if
+$[\boldsymbol{A}_\ell]_{j,i} = 0$ for all $\ell = 1, \ldots, p$
+[@lutkepohl2005, Chapter 2].
+\end{remark}
+
+
+## Seasonal-Trend Decomposition (STL) {#sec-stl}
+
+### Motivation
+
+Agricultural commodity prices exhibit strong seasonal patterns driven by
+planting and harvest cycles, weather, and demand fluctuations. STL
+decomposition [@cleveland1990] separates these components, enabling
+growers to identify **optimal purchasing windows** within the annual cycle.
+
+\begin{definition}[Additive Decomposition]
+\begin{equation}
+  P_t = T_t + S_t + R_t,
+  \label{eq:stl}
+\end{equation}
+where $T_t$ is the trend component, $S_t$ is the seasonal component
+(with period $m$, typically $m = 12$ for monthly data), and $R_t$ is the
+remainder (irregular component).
+\end{definition}
+
+For multiplicative relationships (common in price data where variance
+scales with level), we apply the decomposition to log-prices:
+
+\begin{equation}
+  \log P_t = T_t^{(\log)} + S_t^{(\log)} + R_t^{(\log)},
+  \label{eq:stl-log}
+\end{equation}
+
+which implies $P_t = e^{T_t^{(\log)}} \cdot e^{S_t^{(\log)}} \cdot
+e^{R_t^{(\log)}}$---a multiplicative decomposition.
+
+### STL Algorithm
+
+STL uses iterated applications of locally weighted regression (loess)
+to extract the components:
+
+\begin{enumerate}
+  \item \textbf{Inner loop} (seasonal and trend extraction):
+  \begin{enumerate}
+    \item Detrend: $P_t - T_t^{(k)}$
+    \item Compute seasonal sub-series (group by month) and smooth with loess
+    \item Low-pass filter the seasonal series to remove residual trend
+    \item Subtract seasonal to get deseasonalised data
+    \item Smooth with loess to obtain updated trend $T_t^{(k+1)}$
+  \end{enumerate}
+  \item \textbf{Outer loop} (robustness weights): downweight
+        outliers based on residuals $R_t = P_t - T_t - S_t$
+\end{enumerate}
+
+Key parameters:
+\begin{itemize}
+  \item $n_s$: seasonal smoothing window (must be odd, $\geq 7$ for
+        monthly data)
+  \item $n_t$: trend smoothing window (controls trend flexibility)
+  \item $n_l$: low-pass filter window
+\end{itemize}
+
+
+### Seasonal Adjustment for Grower Purchasing
+
+\begin{remark}[Optimal buying window]
+The seasonal component $S_t$ directly reveals the typical annual price
+cycle. If urea's seasonal component shows a trough in, say, June--August,
+this identifies a statistically persistent purchasing window across years.
+Growers can plan fertiliser procurement around these seasonal lows,
+potentially saving significantly on input costs.
+
+The remainder $R_t$ captures the unpredictable component. A large positive
+$R_t$ superimposed on a seasonal low suggests an anomalous event---warranting
+careful analysis before committing to large purchases.
+\end{remark}
+
+
+\newpage
+
+# Synthesis and Future Directions {#sec-future}
+
+Table~\ref{tab:methods} summarises all methods and their grower-facing
+utility.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}p{3cm}p{4.5cm}p{4.5cm}@{}}
+\toprule
+\textbf{Method} & \textbf{Mathematical Basis} & \textbf{Grower Decision} \\
+\midrule
+Z-Score (\S\ref{sec-zscore}) &
+  Standardisation of heterogeneous series &
+  Compare movements across commodities \\[4pt]
+Cross-Correlation (\S\ref{sec-ccf}) &
+  Lagged covariance analysis &
+  Early warning: which prices move first \\[4pt]
+Rolling Correlation (\S\ref{sec-rolling}) &
+  Windowed Pearson $\rho$ &
+  Detect regime changes \\[4pt]
+Percentile Alerts (\S\ref{sec-alerts}) &
+  Empirical CDF &
+  Traffic light: buy/sell timing \\[4pt]
+VAR (\S\ref{sec-var}) &
+  Multivariate autoregression &
+  6-month directional forecast \\[4pt]
+\midrule
+O-U (\S\ref{sec-ou}) &
+  Mean-reverting SDE &
+  Half-life of price shocks \\[4pt]
+Wavelets (\S\ref{sec-wavelets}) &
+  Multiresolution analysis &
+  Noise vs trend separation \\[4pt]
+Granger Causality (\S\ref{sec-granger}) &
+  Predictive F-testing &
+  Formal causality $p$-values \\[4pt]
+STL (\S\ref{sec-stl}) &
+  Loess-based decomposition &
+  Optimal seasonal buying windows \\
+\bottomrule
+\end{tabular}
+\caption{Summary of analytical methods in Ntracker, with mathematical
+foundations and practical grower applications. Upper block: currently
+implemented. Lower block: proposed extensions.}
+\label{tab:methods}
+\end{table}
+
+
+### Proposed Implementation Roadmap
+
+\begin{enumerate}
+  \item \textbf{STL seasonal windows}: identify optimal months for
+        fertiliser purchasing via seasonal decomposition of urea prices.
+  \item \textbf{Wavelet denoising}: apply DWT to separate short-term
+        noise from actionable price trends in the dashboard.
+  \item \textbf{O-U half-life estimation}: compute mean-reversion
+        speed for each commodity, displayed as ``expected recovery time''
+        after a price shock.
+  \item \textbf{Granger causality testing}: add formal $p$-values to
+        the lead-lag panel, strengthening the statistical evidence for
+        cross-commodity predictability.
+  \item \textbf{Wavelet coherence maps}: visualise time-varying
+        co-movement in the time--frequency plane, revealing when and at
+        what time scales commodity prices are most strongly coupled.
+\end{enumerate}
+
+
+# References {.unnumbered}
